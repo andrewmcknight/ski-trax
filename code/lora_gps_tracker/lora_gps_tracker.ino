@@ -3,7 +3,7 @@
  * Function:
  * 1. Read GPS coordinates from onboard GPS module
  * 2. Share position with another tracker via LoRa
- * 3. Display local and remote positions on TFT screen
+ * 3. Display local and remote positions on onboard TFT screen
  * 4. Calculate and display distance and bearing between devices
  */
 
@@ -110,12 +110,15 @@ void loop() {
     // State machine for LoRa communication
     switch(state) {
         case STATE_TX:
+            // Always send a packet - either coordinates or "NOFIX"
             if (localPos.valid) {
-                // Send GPS coordinates via LoRa
                 sprintf(txpacket, "%.6f,%.6f", localPos.lat, localPos.lon);
                 Serial.printf("Sending: %s\r\n", txpacket);
-                Radio.Send((uint8_t *)txpacket, strlen(txpacket));
+            } else {
+                sprintf(txpacket, "NOFIX");
+                Serial.println("Sending: NOFIX");
             }
+            Radio.Send((uint8_t *)txpacket, strlen(txpacket));
             state = LOWPOWER;
             break;
             
@@ -174,23 +177,31 @@ void updateDisplay() {
     }
     
     // Remote Position & Distance
-    if (remotePos.valid && (millis() - remotePos.lastUpdate < 30000)) {
-        String rLatStr = "R:" + String(remotePos.lat, 4);
-        String rLonStr = String(remotePos.lon, 4);
-        st7735.st7735_write_str(0, 25, rLatStr);
-        st7735.st7735_write_str(0, 35, rLonStr);
-        
-        // Calculate and display relative position
-        if (localPos.valid) {
-            double distance = calculateDistance(localPos.lat, localPos.lon, 
-                                               remotePos.lat, remotePos.lon);
-            double bearing = calculateBearing(localPos.lat, localPos.lon, 
-                                             remotePos.lat, remotePos.lon);
+    if (millis() - remotePos.lastUpdate < 30000) {
+        // We've received something recently from remote
+        if (remotePos.valid) {
+            // Remote has a GPS fix
+            String rLatStr = "R:" + String(remotePos.lat, 4);
+            String rLonStr = String(remotePos.lon, 4);
+            st7735.st7735_write_str(0, 25, rLatStr);
+            st7735.st7735_write_str(0, 35, rLonStr);
             
-            String distStr = String(distance, 0) + "m " + String(bearing, 0) + "d";
-            st7735.st7735_write_str(0, 50, distStr);
+            // Calculate and display relative position
+            if (localPos.valid) {
+                double distance = calculateDistance(localPos.lat, localPos.lon, 
+                                                   remotePos.lat, remotePos.lon);
+                double bearing = calculateBearing(localPos.lat, localPos.lon, 
+                                                 remotePos.lat, remotePos.lon);
+                
+                String distStr = String(distance, 0) + "m " + String(bearing, 0) + "d";
+                st7735.st7735_write_str(0, 50, distStr);
+            }
+        } else {
+            // Remote connected but no GPS fix
+            st7735.st7735_write_str(0, 25, (String)"R:No Fix");
         }
     } else {
+        // Haven't heard from remote in 30 seconds
         st7735.st7735_write_str(0, 25, (String)"R:No Signal");
     }
     
@@ -249,14 +260,21 @@ void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
     
     Serial.printf("Received: %s (RSSI: %d)\r\n", rxpacket, Rssi);
     
-    // Parse received coordinates
-    double lat, lon;
-    if (sscanf(rxpacket, "%lf,%lf", &lat, &lon) == 2) {
-        remotePos.lat = lat;
-        remotePos.lon = lon;
-        remotePos.valid = true;
+    // Check if remote has no fix
+    if (strcmp(rxpacket, "NOFIX") == 0) {
+        remotePos.valid = false;
         remotePos.lastUpdate = millis();
-        Serial.printf("Remote position updated: %.6f, %.6f\r\n", lat, lon);
+        Serial.println("Remote has no GPS fix");
+    } else {
+        // Parse received coordinates
+        double lat, lon;
+        if (sscanf(rxpacket, "%lf,%lf", &lat, &lon) == 2) {
+            remotePos.lat = lat;
+            remotePos.lon = lon;
+            remotePos.valid = true;
+            remotePos.lastUpdate = millis();
+            Serial.printf("Remote position updated: %.6f, %.6f\r\n", lat, lon);
+        }
     }
     
     state = STATE_RX;
