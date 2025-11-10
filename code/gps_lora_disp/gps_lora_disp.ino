@@ -1,4 +1,5 @@
-/* Heltec Wireless Tracker - GPS Position Sharing via LoRa with ILI9341 Display
+/* (OLD!!!)
+ * Heltec Wireless Tracker - GPS Position Sharing via LoRa with ILI9341 Display
  *
  * Hardware Connections:
  * ILI9341 TFT Display to Wireless Tracker:
