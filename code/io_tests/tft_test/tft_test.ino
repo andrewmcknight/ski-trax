@@ -4,30 +4,35 @@
  * Minimal diagnostic sketch that exercises the Adafruit 2.2" ILI9341 TFT
  * when it is connected through the EyeSPI breakout.  The test uses the
  * GPIO assignments requested in the issue and configures hardware SPI on
- * the Heltec Wireless Tracker (ESP32-S3) accordingly.
+ * the Heltec WiFi LoRa 32 V3 (ESP32-S3) accordingly.
  *
- * Connections (EyeSPI ribbon -> Wireless Tracker J3 header):
- *   - VCC  -> 3V3 (make sure VEXT is enabled on the Heltec board)
+ * Connections (EyeSPI ribbon -> Heltec WiFi LoRa 32 V3 headers):
+ *   - VCC  -> 3V3 (left header pin 2 or 3, *not* the Ve rail)
  *   - GND  -> GND
- *   - SCK  -> GPIO3  (EyeSPI SCK)
- *   - MOSI -> GPIO4
- *   - CS   -> GPIO7
- *   - D/C  -> GPIO5
- *   - RST  -> GPIO6
- *   - MISO -> not used
+ *   - SCK  -> GPIO36 (right header pin 9, labelled FSPICLK)
+ *   - MOSI -> GPIO35 (right header pin 10, labelled FSPID)
+ *   - CS   -> GPIO34 (right header pin 11, labelled FSPICS0)
+ *   - D/C  -> GPIO41 (left header pin 8)
+ *   - RST  -> GPIO42 (left header pin 7)
+ *   - MISO -> GPIO33 (right header pin 12, labelled FSPIHD — optional)
+ *   - BL   -> leave unconnected (the 2.2" TFT has an internal pull-up)
+ *
+ * The Ve pins on the right header are switched by GPIO36. Because that pin is
+ * now used as the SPI clock the TFT must be powered from the always-on 3V3
+ * rail instead of Ve.
  */
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <SPI.h>
 
-// Pin definitions supplied in the request
-#define TFT_CS   7
-#define TFT_RST  6
-#define TFT_DC   5
-#define TFT_MOSI 4
-#define TFT_SCK  3
-#define TFT_MISO -1
+// EyeSPI -> Heltec WiFi LoRa 32 V3 pin assignments
+#define TFT_CS   34
+#define TFT_RST  42
+#define TFT_DC   41
+#define TFT_MOSI 35
+#define TFT_SCK  36
+#define TFT_MISO 33
 
 // Drive the panel at a conservative SPI clock until wiring is confirmed
 #define TFT_SPI_FREQUENCY  20000000UL  // 20 MHz is well within the ILI9341 spec
@@ -107,6 +112,7 @@ void setup() {
   Serial.print("  DC   -> GPIO"); Serial.println(TFT_DC);
   Serial.print("  MOSI -> GPIO"); Serial.println(TFT_MOSI);
   Serial.print("  SCK  -> GPIO"); Serial.println(TFT_SCK);
+  Serial.print("  MISO -> GPIO"); Serial.println(TFT_MISO);
 
   Serial.println("\nInitialising SPI bus...");
   configureSpiPins();
