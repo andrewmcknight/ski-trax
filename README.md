@@ -1,6 +1,6 @@
-# Ski-Trax (Work in Progress)
+# Ski-Trax
 
-Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. The goal is a rugged, skier-friendly device that can capture GNSS data, sense motion, render a live dashboard on a TFT screen, and share status over a LoRa mesh network. This repository currently contains early hardware bring-up sketches, wiring notes, and reference assets while the full application is still under active development.
+Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. It's a work in progress - the goal is a rugged device that skiers can use to find their friends/family on the slopes.
 
 ## Hardware Stack
 - **Main MCU:** Heltec WiFi LoRa 32 V3 (ESP32-S3 + SX1262)
@@ -15,13 +15,12 @@ Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. T
 |----------|-------------|-------|
 | I2C SDA | 48 | Shared by MAX-M10S, BNO055, BMP390 |
 | I2C SCL | 47 | Shared by MAX-M10S, BNO055, BMP390 |
-| TFT SCK | 3 | Hardware SPI via EyeSPI ribbon (shares Heltec VEXT control pad) |
+| TFT SCK | 3 | Hardware SPI via EyeSPI ribbon |
 | TFT MOSI | 4 | Hardware SPI via EyeSPI ribbon |
 | TFT CS | 7 | |
 | TFT D/C | 5 | |
 | TFT RST | 6 | |
 | TFT Backlight PWM | 2 | Driven with LEDC PWM |
-| GNSS Power Enable (VGNSS_CTRL) | 3 | Drives Heltec VEXT rail for MAX-M10S power (may be revisited) |
 | Button – Dim | 40 | Input with pull-up |
 | Button – Buzzer | 41 | Input with pull-up |
 | Button – Brighten | 42 | Input with pull-up |
@@ -30,8 +29,5 @@ Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. T
 > **Note:** Additional peripherals (LoRa radio, onboard OLED, etc.) are handled by the Heltec board but not yet integrated into the main application sketch.
 
 ## Project Status
-- ✅ Peripheral test sketches for GNSS, TFT, IMU, pressure sensor, and buzzer
-- 🚧 System integration and user-facing application logic
-- 🚧 Enclosure, power budgeting, and field testing
-
-Expect rapid iteration: wiring, firmware structure, and documentation will change as we move from bench testing to field-ready prototypes. Contributions should treat this README as a living document.
+- I/O test sketches complete for GNSS, TFT, IMU, pressure sensor, buttons, and buzzer
+- In progress: pcb and enclosure design, user-facing app, and field testing
