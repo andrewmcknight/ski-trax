@@ -1,28 +1,17 @@
 /* ILI9341 Display Test
- * 
- * Hardware Connections:
- * ILI9341 TFT Display to Wireless Tracker:
- * - VCC   -> 3V3
- * - GND   -> GND
- * - CS    -> GPIO7
- * - RESET -> GPIO6
- * - DC    -> GPIO5
- * - MOSI  -> GPIO4
- * - SCK   -> GPIO17
- * - LED   -> 3V3 (with 100-150Ω resistor if needed)
- * 
  */
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <SPI.h>
 
-// Pin definitions using GPIO 4-7 + GPIO17
-#define TFT_CS      7
-#define TFT_DC      5
-#define TFT_RST     6
-#define TFT_MOSI    4
-#define TFT_SCK     17
+// Pin definitions
+#define TFT_CS 7
+#define TFT_RST 6
+#define TFT_DC 5
+#define TFT_MOSI 4
+#define TFT_SCK 3
+#define TFT_MISO -1
 
 // Create display object
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RST);
@@ -32,14 +21,13 @@ void setup() {
   delay(500);
   
   Serial.println("\n\n========================================");
-  Serial.println("ILI9341 Test - GPIO 4-7");
   Serial.println("========================================");
   Serial.println("\nPin Configuration:");
-  Serial.print("  CS:    GPIO"); Serial.print(TFT_CS);   Serial.println(" (Header J3, Pin 5)");
-  Serial.print("  DC:    GPIO"); Serial.print(TFT_DC);   Serial.println(" (Header J3, Pin 7)");
-  Serial.print("  RST:   GPIO"); Serial.print(TFT_RST);  Serial.println(" (Header J3, Pin 6)");
-  Serial.print("  MOSI:  GPIO"); Serial.print(TFT_MOSI); Serial.println(" (Header J3, Pin 8)");
-  Serial.print("  SCK:   GPIO"); Serial.print(TFT_SCK);  Serial.println(" (Header J3, Pin 2)");
+  Serial.print("  CS:    GPIO"); Serial.print(TFT_CS);
+  Serial.print("  DC:    GPIO"); Serial.print(TFT_DC);
+  Serial.print("  RST:   GPIO"); Serial.print(TFT_RST);
+  Serial.print("  MOSI:  GPIO"); Serial.print(TFT_MOSI);
+  Serial.print("  SCK:   GPIO"); Serial.print(TFT_SCK);
   
   Serial.println("\nThese pins are FREE - no conflicts!");
   

@@ -27,14 +27,14 @@
 #include "LoRaWan_APP.h"
 
 // ---------------------- Pin & Interface Definitions ----------------------
-#define I2C_SDA_PIN 47
-#define I2C_SCL_PIN 48
+#define I2C_SDA_PIN 48
+#define I2C_SCL_PIN 47
 
 #define TFT_CS 7
-#define TFT_DC 5
 #define TFT_RST 6
+#define TFT_DC 5
 #define TFT_MOSI 4
-#define TFT_SCK 17
+#define TFT_SCK 3
 #define TFT_MISO -1
 #define TFT_SPI_FREQUENCY 40000000UL
 

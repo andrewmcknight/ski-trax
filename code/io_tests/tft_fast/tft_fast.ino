@@ -1,17 +1,5 @@
 /* ILI9341 Display Test - FAST VERSION
  * 
- * Hardware Connections:
- * ILI9341 TFT Display to Wireless Tracker:
- * - VCC   -> 3V3
- * - GND   -> GND
- * - CS    -> GPIO7
- * - RESET -> GPIO6
- * - DC    -> GPIO5
- * - MOSI  -> GPIO4
- * - SCK   -> GPIO17
- * - LED   -> 3V3 (with 100-150Ω resistor if needed)
- * 
- * This version uses HARDWARE SPI for maximum speed!
  */
 
 #include <Adafruit_GFX.h>
@@ -19,14 +7,12 @@
 #include <SPI.h>
 
 // Pin definitions
-#define TFT_CS      7
-#define TFT_DC      5
-#define TFT_RST     6
-
-// Hardware SPI pins (ESP32 VSPI default)
-#define TFT_MOSI    4   // Connect to your MOSI
-#define TFT_SCK     17  // Connect to your SCK
-#define TFT_MISO    -1  // Not used, but needed for SPI.begin()
+#define TFT_CS 7
+#define TFT_RST 6
+#define TFT_DC 5
+#define TFT_MOSI 4
+#define TFT_SCK 3
+#define TFT_MISO -1
 
 // SPI Speed - ILI9341 can handle up to 40MHz, some can do 80MHz!
 #define SPI_FREQUENCY  40000000  // 40 MHz - try 80000000 if this works well!

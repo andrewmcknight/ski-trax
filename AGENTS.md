@@ -6,9 +6,9 @@ Multi-device GPS tracker with LoRa mesh networking. Clean, interactive UI displa
 ### Heltec WiFi LoRa 32 V3 (Main Board)
 - **MCU**: ESP32-S3FN8 (dual-core 240MHz, 8MB Flash, 512KB SRAM)
 - **Radio**: SX1262 LoRa + WiFi/BT 5.0
-- **Display**: Built-in 0.96" OLED (128×64)
+- **Display**: Built-in 0.96" 128x96 OLED (unused)
 - **Power**: USB-C, SH1.25-2 battery, charge management
-- **Critical Pins**: GPIO1 (battery ADC), GPIO3 (Vext control), GPIO17 (⚠️ internal GPS UART)
+- **Critical Pins**: GPIO1 (battery ADC), GPIO3 (Vext control), GPIO17 (internal GPS UART)
 
 ### External Modules
 | Component | Interface | Address/Notes |
