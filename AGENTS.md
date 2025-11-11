@@ -19,6 +19,8 @@ Multi-device GPS tracker with LoRa mesh networking. Clean, interactive UI displa
 | Adafruit BMP-390 | I2C | 0x76/0x77, pressure/temp |
 | Buttons + Buzzer | GPIO | TBD assignments |
 
+> Note: we now connect to the Adafruit TFT via the Adafruit EYESPI breakout board.
+
 ## Project Structure
 ```
 code/
@@ -41,3 +43,6 @@ pcb/         # Custom PCB designs
 *Note: some example code may be outdated*
 
 Consult the documentation when uncertain. Be aware that datasheets may pertain to individual components, not the breakout-style modules we are using.
+* `docs/ht_wifi_lora_32_v3_pin_table.json` may be helpful for pin assignemnts.
+
+Do not write code for the Heltec Wireless Tracker! Only write code for the Heltec WiFi LoRa 32 v3.
