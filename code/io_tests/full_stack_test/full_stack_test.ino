@@ -7,7 +7,9 @@
  *   - Adafruit BMP390 pressure/temperature sensor over I2C
  *   - Adafruit BNO055 IMU over I2C (orientation + calibration)
  *   - ILI9341 TFT display over hardware SPI (status dashboard)
- *   - Two onboard buttons (BOOT and USER) with live state reporting
+ *   - Three external buttons on GPIO40-42 (dim, buzzer pulse, brighten)
+ *   - TFT backlight PWM control on GPIO2 with on-screen brightness level
+ *   - Piezo buzzer on GPIO39 for audible confirmation
  *
  * Use this sketch to confirm that all subsystems can run concurrently
  * without blocking each other. Pair it with the companion sketch located
@@ -38,10 +40,26 @@
 #define TFT_MISO -1
 #define TFT_SPI_FREQUENCY 40000000UL
 
-#define BUTTON_BOOT 0   // BOOT button on Heltec WiFi LoRa 32 V3
-#define BUTTON_USER 14  // User button (GPIO14) on Heltec WiFi LoRa 32 V3
+#define BUTTON_DIM 40     // External button: dim TFT backlight
+#define BUTTON_BUZZ 41    // External button: trigger buzzer pulse
+#define BUTTON_BRIGHT 42  // External button: brighten TFT backlight
+
+#define TFT_BACKLIGHT_PIN 2  // PWM-capable pin connected to TFT backlight
+#define BUZZER_PIN 39        // Piezo buzzer control line
 
 #define VGNSS_CTRL 3    // Power control for GNSS module
+
+const uint8_t BACKLIGHT_CHANNEL = 0;
+const uint8_t BUZZER_CHANNEL = 1;
+const uint32_t BACKLIGHT_PWM_FREQ = 5000;
+const uint8_t BACKLIGHT_PWM_RESOLUTION = 8;   // 0-255 duty cycle
+const uint32_t BUZZER_PWM_FREQ = 2400;
+const uint8_t BUZZER_PWM_RESOLUTION = 10;     // 0-1023 duty cycle
+const uint32_t BUZZER_ACTIVE_DUTY = 1 << (BUZZER_PWM_RESOLUTION - 1);
+const unsigned long BUZZER_PULSE_MS = 200;
+
+const uint8_t kBrightnessSteps[] = {12, 32, 56, 80, 112, 144, 184, 224, 255};
+const size_t kBrightnessStepCount = sizeof(kBrightnessSteps) / sizeof(kBrightnessSteps[0]);
 
 // --------------------------- LoRa Configuration --------------------------
 #define RF_FREQUENCY 915000000UL
@@ -90,8 +108,11 @@ struct SensorSnapshot {
   uint8_t imuCalAccel = 0;
   uint8_t imuCalMag = 0;
 
-  bool buttonBootPressed = false;
-  bool buttonUserPressed = false;
+  bool buttonDimPressed = false;
+  bool buttonBuzzPressed = false;
+  bool buttonBrightPressed = false;
+  uint8_t displayBrightnessPercent = 0;
+  bool buzzerPlaying = false;
 };
 
 SensorSnapshot snapshot;
@@ -107,6 +128,28 @@ struct LoRaStatus {
 };
 
 LoRaStatus loraStatus;
+
+struct LayoutGeometry {
+  uint16_t marginLeft = 0;
+  uint16_t contentWidth = 0;
+  uint16_t screenWidth = 0;
+  uint16_t screenHeight = 0;
+  uint16_t gnssTop = 0;
+  uint16_t gnssHeight = 0;
+  uint16_t imuTop = 0;
+  uint16_t imuHeight = 0;
+  uint16_t buttonsTop = 0;
+  uint16_t buttonsHeight = 0;
+  uint16_t loraTop = 0;
+  uint16_t loraHeight = 0;
+};
+
+LayoutGeometry layout;
+
+size_t brightnessIndex = kBrightnessStepCount > 0 ? kBrightnessStepCount - 2 : 0;
+uint8_t currentBacklightDuty = 0;
+bool buzzerPlaying = false;
+unsigned long buzzerOffDeadline = 0;
 
 // ------------------------------- LoRa State -------------------------------
 static RadioEvents_t RadioEvents;
@@ -142,6 +185,12 @@ const unsigned long DISPLAY_REFRESH_MS = 500;
 void initDisplay();
 void drawStaticLayout();
 void updateDisplay();
+void initBacklight();
+void initBuzzer();
+void applyBacklightDuty();
+bool adjustBrightness(int8_t delta);
+void triggerBuzzerPulse();
+void serviceBuzzer();
 void updateGps();
 void updateImu();
 void updatePressure();
@@ -160,8 +209,12 @@ void setup() {
   pinMode(VGNSS_CTRL, OUTPUT);
   digitalWrite(VGNSS_CTRL, HIGH);  // Enable GNSS power rail
 
-  pinMode(BUTTON_BOOT, INPUT_PULLUP);
-  pinMode(BUTTON_USER, INPUT_PULLUP);
+  pinMode(BUTTON_DIM, INPUT_PULLUP);
+  pinMode(BUTTON_BUZZ, INPUT_PULLUP);
+  pinMode(BUTTON_BRIGHT, INPUT_PULLUP);
+
+  initBacklight();
+  initBuzzer();
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(400000);
@@ -251,6 +304,8 @@ void loop() {
     lastDisplayUpdate = now;
   }
 
+  serviceBuzzer();
+
   scheduleLoRaTx();
   processLoRa();
 }
@@ -258,45 +313,263 @@ void loop() {
 // ------------------------------ Initialization ---------------------------
 void initDisplay() {
   tft.begin(TFT_SPI_FREQUENCY);
-  tft.setRotation(1);  // Landscape orientation
+  tft.setRotation(0);  // Portrait orientation for 240x360 layout
+  tft.setTextWrap(false);
   tft.fillScreen(ILI9341_BLACK);
   tft.setTextColor(ILI9341_CYAN);
   tft.setTextSize(2);
-  tft.setCursor(20, 40);
+  tft.setCursor(12, 24);
   tft.println("Heltec Full I/O Test");
   tft.setTextSize(1);
-  tft.setCursor(20, 70);
+  tft.setCursor(12, 52);
   tft.setTextColor(ILI9341_WHITE);
   tft.println("Initializing peripherals...");
 }
 
 void drawStaticLayout() {
+  layout.screenWidth = tft.width();
+  layout.screenHeight = tft.height();
+  layout.marginLeft = 10;
+  layout.contentWidth = layout.screenWidth > 2 * layout.marginLeft
+                             ? layout.screenWidth - (2 * layout.marginLeft)
+                             : layout.screenWidth;
+
+  const uint16_t topMargin = 8;
+  const uint16_t bottomMargin = 8;
+  const uint16_t headerHeight = 32;
+  const uint16_t sectionGap = 6;
+
   tft.fillScreen(ILI9341_BLACK);
   tft.setTextColor(ILI9341_CYAN);
   tft.setTextSize(2);
-  tft.setCursor(8, 8);
-  tft.println("FULL STACK I/O TEST");
-
-  tft.drawFastHLine(0, 30, 320, ILI9341_DARKGREY);
-
+  tft.setCursor(layout.marginLeft, topMargin);
+  tft.println("FULL STACK");
+  tft.setCursor(layout.marginLeft, topMargin + 18);
+  tft.println("I/O TEST");
   tft.setTextSize(1);
+  tft.drawFastHLine(layout.marginLeft, topMargin + headerHeight, layout.contentWidth,
+                    ILI9341_DARKGREY);
+
+  uint16_t availableHeight = 0;
+  if (layout.screenHeight > (topMargin + headerHeight + bottomMargin + sectionGap * 3)) {
+    availableHeight = layout.screenHeight -
+                      (topMargin + headerHeight + bottomMargin + sectionGap * 3);
+  }
+
+  uint16_t sectionHeights[4] = {0, 0, 0, 0};
+  const uint16_t minHeights[4] = {72, 80, 54, 60};
+  const uint16_t minSum = minHeights[0] + minHeights[1] + minHeights[2] + minHeights[3];
+
+  if (availableHeight == 0) {
+    // No vertical real estate beyond the header; leave sections collapsed.
+  } else if (availableHeight < minSum) {
+    float scale = minSum > 0 ? static_cast<float>(availableHeight) / static_cast<float>(minSum)
+                             : 0.0f;
+    if (scale < 0.2f) {
+      scale = 0.2f;
+    }
+    uint16_t total = 0;
+    for (size_t i = 0; i < 4; ++i) {
+      sectionHeights[i] = static_cast<uint16_t>(minHeights[i] * scale);
+      if (sectionHeights[i] < 18) {
+        sectionHeights[i] = 18;
+      }
+      total += sectionHeights[i];
+    }
+    if (total > availableHeight) {
+      uint16_t over = total - availableHeight;
+      while (over > 0) {
+        bool reduced = false;
+        for (size_t i = 0; i < 4 && over > 0; ++i) {
+          if (sectionHeights[i] > 18) {
+            sectionHeights[i]--;
+            --over;
+            reduced = true;
+          }
+        }
+        if (!reduced) {
+          break;
+        }
+      }
+    }
+    total = sectionHeights[0] + sectionHeights[1] + sectionHeights[2] + sectionHeights[3];
+    if (total < availableHeight) {
+      sectionHeights[3] += availableHeight - total;
+    }
+  } else {
+    sectionHeights[0] = (availableHeight * 30) / 100;
+    sectionHeights[1] = (availableHeight * 32) / 100;
+    sectionHeights[2] = (availableHeight * 18) / 100;
+    sectionHeights[3] = availableHeight -
+                        (sectionHeights[0] + sectionHeights[1] + sectionHeights[2]);
+
+    uint16_t total = 0;
+    for (size_t i = 0; i < 4; ++i) {
+      if (sectionHeights[i] < minHeights[i]) {
+        sectionHeights[i] = minHeights[i];
+      }
+      total += sectionHeights[i];
+    }
+
+    if (total > availableHeight) {
+      uint16_t over = total - availableHeight;
+      while (over > 0) {
+        size_t largestIndex = 0;
+        uint16_t largestSpare = 0;
+        for (size_t i = 0; i < 4; ++i) {
+          if (sectionHeights[i] > minHeights[i]) {
+            uint16_t spare = sectionHeights[i] - minHeights[i];
+            if (spare > largestSpare) {
+              largestSpare = spare;
+              largestIndex = i;
+            }
+          }
+        }
+        if (largestSpare == 0) {
+          break;
+        }
+        sectionHeights[largestIndex]--;
+        --over;
+      }
+    }
+
+    uint16_t recalculatedTotal = sectionHeights[0] + sectionHeights[1] + sectionHeights[2] +
+                                 sectionHeights[3];
+    if (recalculatedTotal < availableHeight) {
+      sectionHeights[3] += availableHeight - recalculatedTotal;
+    }
+  }
+
+  layout.gnssTop = topMargin + headerHeight + 4;
+  layout.gnssHeight = sectionHeights[0];
+  layout.imuTop = layout.gnssTop + layout.gnssHeight + sectionGap;
+  layout.imuHeight = sectionHeights[1];
+  layout.buttonsTop = layout.imuTop + layout.imuHeight + sectionGap;
+  layout.buttonsHeight = sectionHeights[2];
+  layout.loraTop = layout.buttonsTop + layout.buttonsHeight + sectionGap;
+  layout.loraHeight = sectionHeights[3];
+
+  const uint16_t boxLeft = layout.marginLeft - 2;
+  const uint16_t boxWidth = layout.contentWidth + 4;
+
   tft.setTextColor(ILI9341_YELLOW);
-  tft.setCursor(8, 38);
-  tft.println("GNSS");
+  if (layout.gnssHeight > 8) {
+    tft.drawRoundRect(boxLeft, layout.gnssTop - 4, boxWidth, layout.gnssHeight, 6,
+                      ILI9341_DARKGREY);
+    tft.setCursor(layout.marginLeft, layout.gnssTop + 4);
+    tft.print("GNSS");
+  }
 
-  tft.setCursor(8, 98);
-  tft.println("IMU / ENV");
+  if (layout.imuHeight > 8) {
+    tft.drawRoundRect(boxLeft, layout.imuTop - 4, boxWidth, layout.imuHeight, 6,
+                      ILI9341_DARKGREY);
+    tft.setCursor(layout.marginLeft, layout.imuTop + 4);
+    tft.print("IMU & ENV");
+  }
 
-  tft.setCursor(8, 168);
-  tft.println("BUTTONS");
+  if (layout.buttonsHeight > 8) {
+    tft.drawRoundRect(boxLeft, layout.buttonsTop - 4, boxWidth, layout.buttonsHeight, 6,
+                      ILI9341_DARKGREY);
+    tft.setCursor(layout.marginLeft, layout.buttonsTop + 4);
+    tft.print("CONTROLS");
+  }
 
-  tft.setCursor(8, 208);
-  tft.println("LORA LINK");
+  if (layout.loraHeight > 8) {
+    tft.drawRoundRect(boxLeft, layout.loraTop - 4, boxWidth, layout.loraHeight, 6,
+                      ILI9341_DARKGREY);
+    tft.setCursor(layout.marginLeft, layout.loraTop + 4);
+    tft.print("LORA LINK");
+  }
 
-  tft.drawRoundRect(4, 50, 312, 44, 4, ILI9341_DARKGREY);
-  tft.drawRoundRect(4, 110, 312, 52, 4, ILI9341_DARKGREY);
-  tft.drawRoundRect(4, 178, 312, 24, 4, ILI9341_DARKGREY);
-  tft.drawRoundRect(4, 214, 312, 102, 4, ILI9341_DARKGREY);
+  tft.setTextColor(ILI9341_WHITE);
+}
+
+void initBacklight() {
+  pinMode(TFT_BACKLIGHT_PIN, OUTPUT);
+  ledcSetup(BACKLIGHT_CHANNEL, BACKLIGHT_PWM_FREQ, BACKLIGHT_PWM_RESOLUTION);
+  ledcAttachPin(TFT_BACKLIGHT_PIN, BACKLIGHT_CHANNEL);
+
+  if (kBrightnessStepCount == 0) {
+    currentBacklightDuty = 0;
+    ledcWrite(BACKLIGHT_CHANNEL, currentBacklightDuty);
+    snapshot.displayBrightnessPercent = 0;
+    return;
+  }
+
+  if (brightnessIndex >= kBrightnessStepCount) {
+    brightnessIndex = kBrightnessStepCount - 1;
+  }
+
+  applyBacklightDuty();
+}
+
+void initBuzzer() {
+  pinMode(BUZZER_PIN, OUTPUT);
+  ledcSetup(BUZZER_CHANNEL, BUZZER_PWM_FREQ, BUZZER_PWM_RESOLUTION);
+  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
+  ledcWrite(BUZZER_CHANNEL, 0);
+  buzzerPlaying = false;
+  snapshot.buzzerPlaying = false;
+}
+
+void applyBacklightDuty() {
+  if (kBrightnessStepCount == 0) {
+    currentBacklightDuty = 0;
+    ledcWrite(BACKLIGHT_CHANNEL, 0);
+    snapshot.displayBrightnessPercent = 0;
+    return;
+  }
+
+  if (brightnessIndex >= kBrightnessStepCount) {
+    brightnessIndex = kBrightnessStepCount - 1;
+  }
+
+  currentBacklightDuty = kBrightnessSteps[brightnessIndex];
+  ledcWrite(BACKLIGHT_CHANNEL, currentBacklightDuty);
+
+  snapshot.displayBrightnessPercent =
+      static_cast<uint8_t>((static_cast<uint32_t>(currentBacklightDuty) * 100U + 127U) / 255U);
+}
+
+bool adjustBrightness(int8_t delta) {
+  if (kBrightnessStepCount == 0) {
+    return false;
+  }
+
+  int32_t candidate = static_cast<int32_t>(brightnessIndex) + delta;
+  if (candidate < 0) {
+    candidate = 0;
+  } else if (candidate >= static_cast<int32_t>(kBrightnessStepCount)) {
+    candidate = static_cast<int32_t>(kBrightnessStepCount) - 1;
+  }
+
+  if (static_cast<size_t>(candidate) != brightnessIndex) {
+    brightnessIndex = static_cast<size_t>(candidate);
+    applyBacklightDuty();
+    return true;
+  }
+
+  return false;
+}
+
+void triggerBuzzerPulse() {
+  const unsigned long now = millis();
+  buzzerOffDeadline = now + BUZZER_PULSE_MS;
+  ledcWrite(BUZZER_CHANNEL, BUZZER_ACTIVE_DUTY);
+  buzzerPlaying = true;
+  snapshot.buzzerPlaying = true;
+}
+
+void serviceBuzzer() {
+  if (buzzerPlaying && millis() >= buzzerOffDeadline) {
+    ledcWrite(BUZZER_CHANNEL, 0);
+    buzzerPlaying = false;
+    snapshot.buzzerPlaying = false;
+  }
+
+  if (!buzzerPlaying) {
+    snapshot.buzzerPlaying = false;
+  }
 }
 
 // ------------------------------ Sensor Polling ---------------------------
@@ -356,20 +629,51 @@ void updatePressure() {
 }
 
 void updateButtons() {
-  static bool lastBoot = false;
-  static bool lastUser = false;
+  static bool lastDim = false;
+  static bool lastBuzz = false;
+  static bool lastBright = false;
 
-  snapshot.buttonBootPressed = digitalRead(BUTTON_BOOT) == LOW;
-  snapshot.buttonUserPressed = digitalRead(BUTTON_USER) == LOW;
+  const bool dimPressed = digitalRead(BUTTON_DIM) == LOW;
+  const bool buzzPressed = digitalRead(BUTTON_BUZZ) == LOW;
+  const bool brightPressed = digitalRead(BUTTON_BRIGHT) == LOW;
 
-  if (snapshot.buttonBootPressed != lastBoot) {
-    Serial.printf("BOOT button %s\n", snapshot.buttonBootPressed ? "pressed" : "released");
-    lastBoot = snapshot.buttonBootPressed;
+  snapshot.buttonDimPressed = dimPressed;
+  snapshot.buttonBuzzPressed = buzzPressed;
+  snapshot.buttonBrightPressed = brightPressed;
+
+  if (dimPressed != lastDim) {
+    Serial.printf("DIM button %s\n", dimPressed ? "pressed" : "released");
+    if (dimPressed) {
+      const bool changed = adjustBrightness(-1);
+      if (changed) {
+        Serial.printf("  -> Brightness reduced to %u%%\n", snapshot.displayBrightnessPercent);
+      } else {
+        Serial.println("  -> Backlight already at minimum");
+      }
+    }
+    lastDim = dimPressed;
   }
 
-  if (snapshot.buttonUserPressed != lastUser) {
-    Serial.printf("USER button %s\n", snapshot.buttonUserPressed ? "pressed" : "released");
-    lastUser = snapshot.buttonUserPressed;
+  if (brightPressed != lastBright) {
+    Serial.printf("BRIGHT button %s\n", brightPressed ? "pressed" : "released");
+    if (brightPressed) {
+      const bool changed = adjustBrightness(1);
+      if (changed) {
+        Serial.printf("  -> Brightness increased to %u%%\n", snapshot.displayBrightnessPercent);
+      } else {
+        Serial.println("  -> Backlight already at maximum");
+      }
+    }
+    lastBright = brightPressed;
+  }
+
+  if (buzzPressed != lastBuzz) {
+    Serial.printf("BUZZ button %s\n", buzzPressed ? "pressed" : "released");
+    if (buzzPressed) {
+      triggerBuzzerPulse();
+      Serial.println("  -> Buzzer pulse triggered");
+    }
+    lastBuzz = buzzPressed;
   }
 }
 
@@ -378,100 +682,223 @@ void updateDisplay() {
   tft.setTextSize(1);
   tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
 
-  // GNSS Section
-  char line[64];
-  tft.setCursor(12, 58);
-  if (snapshot.gpsFix) {
-    snprintf(line, sizeof(line), "Fix:%u Sat:%u Age:%lus", snapshot.gpsFixType, snapshot.satellites,
-             (millis() - snapshot.lastFixMs) / 1000UL);
-    tft.print(line);
+  const uint16_t contentLeft = layout.marginLeft + 2;
+  const uint16_t contentWidth = layout.contentWidth > 4 ? layout.contentWidth - 4 : layout.contentWidth;
+  const uint16_t contentTopOffset = 16;
+  const uint16_t contentBottomPadding = 6;
+  const uint8_t lineHeight = 12;
+  const uint32_t now = millis();
+  char line[96];
 
-    tft.setCursor(12, 70);
-    snprintf(line, sizeof(line), "Lat: %.5f", snapshot.latitude);
-    tft.print(line);
+  if (layout.gnssHeight > contentTopOffset + contentBottomPadding) {
+    const uint16_t dataTop = layout.gnssTop + contentTopOffset;
+    const uint16_t dataHeight = layout.gnssHeight - (contentTopOffset + contentBottomPadding);
+    tft.fillRect(contentLeft, dataTop, contentWidth, dataHeight, ILI9341_BLACK);
 
-    tft.setCursor(160, 70);
-    snprintf(line, sizeof(line), "Lon: %.5f", snapshot.longitude);
-    tft.print(line);
+    uint16_t cursorY = dataTop;
+    tft.setCursor(contentLeft, cursorY);
+    if (snapshot.gpsFix) {
+      snprintf(line, sizeof(line), "Fix:%u Sat:%u Age:%lus", snapshot.gpsFixType, snapshot.satellites,
+               (now - snapshot.lastFixMs) / 1000UL);
+      tft.print(line);
+      cursorY += lineHeight;
 
-    tft.setCursor(12, 82);
-    snprintf(line, sizeof(line), "Alt: %.1fm  Spd: %.1fm/s", snapshot.altitudeM, snapshot.groundSpeedMps);
-    tft.print(line);
-  } else {
-    snprintf(line, sizeof(line), "No fix (type %u) Sat:%u", snapshot.gpsFixType, snapshot.satellites);
-    tft.print(line);
-    tft.setCursor(12, 70);
-    tft.print("Waiting for valid position...");
-    tft.fillRect(12, 82, 296, 10, ILI9341_BLACK);
+      tft.setCursor(contentLeft, cursorY);
+      snprintf(line, sizeof(line), "Lat: %.5f", snapshot.latitude);
+      tft.print(line);
+      cursorY += lineHeight;
+
+      tft.setCursor(contentLeft, cursorY);
+      snprintf(line, sizeof(line), "Lon: %.5f", snapshot.longitude);
+      tft.print(line);
+      cursorY += lineHeight;
+
+      if (cursorY < dataTop + dataHeight) {
+        tft.setCursor(contentLeft, cursorY);
+        snprintf(line, sizeof(line), "Alt: %.1fm Spd: %.1fm/s", snapshot.altitudeM, snapshot.groundSpeedMps);
+        tft.print(line);
+      }
+    } else {
+      snprintf(line, sizeof(line), "No fix (type %u) Sat:%u", snapshot.gpsFixType, snapshot.satellites);
+      tft.print(line);
+      cursorY += lineHeight;
+      if (cursorY < dataTop + dataHeight) {
+        tft.setCursor(contentLeft, cursorY);
+        tft.print("Waiting for valid position...");
+      }
+    }
   }
 
-  // IMU / ENV Section
-  tft.setCursor(12, 120);
-  if (bnoReady && !isnan(snapshot.imuHeadingDeg)) {
-    snprintf(line, sizeof(line), "Head: %5.1f  Roll: %5.1f  Pitch: %5.1f", snapshot.imuHeadingDeg,
-             snapshot.imuRollDeg, snapshot.imuPitchDeg);
+  if (layout.imuHeight > contentTopOffset + contentBottomPadding) {
+    const uint16_t dataTop = layout.imuTop + contentTopOffset;
+    const uint16_t dataHeight = layout.imuHeight - (contentTopOffset + contentBottomPadding);
+    tft.fillRect(contentLeft, dataTop, contentWidth, dataHeight, ILI9341_BLACK);
+
+    uint16_t cursorY = dataTop;
+    tft.setCursor(contentLeft, cursorY);
+    if (bnoReady && !isnan(snapshot.imuHeadingDeg)) {
+      snprintf(line, sizeof(line), "Head:%5.1f Roll:%5.1f", snapshot.imuHeadingDeg, snapshot.imuRollDeg);
+      tft.print(line);
+      cursorY += lineHeight;
+
+      if (cursorY < dataTop + dataHeight) {
+        tft.setCursor(contentLeft, cursorY);
+        snprintf(line, sizeof(line), "Pitch:%5.1f", snapshot.imuPitchDeg);
+        tft.print(line);
+        cursorY += lineHeight;
+      }
+    } else {
+      tft.print("IMU unavailable");
+      cursorY += lineHeight;
+    }
+
+    if (cursorY < dataTop + dataHeight) {
+      tft.setCursor(contentLeft, cursorY);
+      if (bnoReady) {
+        snprintf(line, sizeof(line), "Cal S:%u G:%u A:%u M:%u", snapshot.imuCalSys, snapshot.imuCalGyro,
+                 snapshot.imuCalAccel, snapshot.imuCalMag);
+        tft.print(line);
+      } else {
+        tft.print("Calibration data N/A");
+      }
+      cursorY += lineHeight;
+    }
+
+    if (cursorY < dataTop + dataHeight) {
+      tft.setCursor(contentLeft, cursorY);
+      if (bmpReady && !isnan(snapshot.temperatureC)) {
+        snprintf(line, sizeof(line), "Temp:%5.1fC Pres:%7.2fhPa", snapshot.temperatureC, snapshot.pressureHpa);
+        tft.print(line);
+      } else {
+        tft.print("BMP390 unavailable");
+      }
+    }
+  }
+
+  if (layout.buttonsHeight > contentTopOffset + contentBottomPadding) {
+    const uint16_t dataTop = layout.buttonsTop + contentTopOffset;
+    const uint16_t dataHeight = layout.buttonsHeight - (contentTopOffset + contentBottomPadding);
+    tft.fillRect(contentLeft, dataTop, contentWidth, dataHeight, ILI9341_BLACK);
+
+    uint16_t cursorY = dataTop;
+    tft.setCursor(contentLeft, cursorY);
+    snprintf(line, sizeof(line), "Dim:%s Buzz:%s Bright:%s",
+             snapshot.buttonDimPressed ? "DOWN" : "UP  ",
+             snapshot.buttonBuzzPressed ? "DOWN" : "UP  ",
+             snapshot.buttonBrightPressed ? "DOWN" : "UP  ");
     tft.print(line);
-  } else {
-    tft.print("IMU unavailable");
+    cursorY += lineHeight;
+
+    if (cursorY < dataTop + dataHeight) {
+      tft.setCursor(contentLeft, cursorY);
+      const unsigned int brightnessLevel =
+          kBrightnessStepCount > 0 ? static_cast<unsigned int>(brightnessIndex + 1) : 0;
+      const unsigned int brightnessTotal = static_cast<unsigned int>(kBrightnessStepCount);
+      snprintf(line, sizeof(line), "Brightness: %3u%% (%u/%u)", snapshot.displayBrightnessPercent,
+               brightnessLevel, brightnessTotal);
+      tft.print(line);
+      cursorY += lineHeight;
+    }
+
+    if (cursorY < dataTop + dataHeight) {
+      tft.setCursor(contentLeft, cursorY);
+      tft.print(snapshot.buzzerPlaying ? "Buzzer: PLAYING" : "Buzzer: idle");
+    }
   }
 
-  tft.setCursor(12, 132);
-  if (bnoReady) {
-    snprintf(line, sizeof(line), "Cal S:%u G:%u A:%u M:%u", snapshot.imuCalSys,
-             snapshot.imuCalGyro, snapshot.imuCalAccel, snapshot.imuCalMag);
+  if (layout.loraHeight > contentTopOffset + contentBottomPadding) {
+    const uint16_t dataTop = layout.loraTop + contentTopOffset;
+    const uint16_t dataHeight = layout.loraHeight - (contentTopOffset + contentBottomPadding);
+    tft.fillRect(contentLeft, dataTop, contentWidth, dataHeight, ILI9341_BLACK);
+
+    uint16_t cursorY = dataTop;
+    tft.setCursor(contentLeft, cursorY);
+    snprintf(line, sizeof(line), "TX:%lu RX:%lu RSSI:%d", static_cast<unsigned long>(loraStatus.txCount),
+             static_cast<unsigned long>(loraStatus.rxCount), loraStatus.lastRssi);
     tft.print(line);
-  } else {
-    tft.print("Calibration data N/A");
+    cursorY += lineHeight;
+
+    if (cursorY < dataTop + dataHeight) {
+      tft.setCursor(contentLeft, cursorY);
+      if (loraStatus.lastRxMillis > 0) {
+        snprintf(line, sizeof(line), "Last RX: %lus ago", (now - loraStatus.lastRxMillis) / 1000UL);
+      } else {
+        snprintf(line, sizeof(line), "Last RX: --");
+      }
+      tft.print(line);
+      cursorY += lineHeight;
+    }
+
+    if (cursorY < dataTop + dataHeight) {
+      tft.setCursor(contentLeft, cursorY);
+      snprintf(line, sizeof(line), "Last TX: %lus ago", (now - loraStatus.lastTxMillis) / 1000UL);
+      tft.print(line);
+      cursorY += lineHeight;
+    }
+
+    if (cursorY < dataTop + dataHeight) {
+      const uint16_t msgTop = cursorY;
+      const uint16_t msgAreaHeight = dataTop + dataHeight - msgTop;
+      const uint8_t availableLines = msgAreaHeight / lineHeight;
+
+      if (availableLines > 0) {
+        if (loraStatus.lastMessageValid && loraStatus.lastMessage[0] != '\0') {
+          const char *message = loraStatus.lastMessage;
+          size_t remaining = strlen(message);
+          size_t offset = 0;
+          const uint8_t maxLineChars = contentWidth > 0 ? contentWidth / 6 : 0;
+
+          for (uint8_t lineIndex = 0; lineIndex < availableLines; ++lineIndex) {
+            const bool firstLine = lineIndex == 0;
+            const uint16_t yPos = msgTop + lineIndex * lineHeight;
+            tft.setCursor(contentLeft, yPos);
+
+            uint8_t charsThisLine = maxLineChars > 4 ? maxLineChars : 24;
+            if (charsThisLine > sizeof(line) - 1) {
+              charsThisLine = sizeof(line) - 1;
+            }
+
+            if (remaining <= charsThisLine) {
+              strncpy(line, message + offset, remaining);
+              line[remaining] = '\0';
+              if (firstLine) {
+                tft.print("Msg: ");
+                tft.print(line);
+              } else {
+                tft.print("      ");
+                tft.print(line);
+              }
+              break;
+            }
+
+            if (lineIndex == availableLines - 1) {
+              if (firstLine) {
+                tft.print("Msg: ...");
+              } else {
+                tft.print("      ...");
+              }
+              break;
+            }
+
+            strncpy(line, message + offset, charsThisLine);
+            line[charsThisLine] = '\0';
+            if (firstLine) {
+              tft.print("Msg: ");
+              tft.print(line);
+            } else {
+              tft.print("      ");
+              tft.print(line);
+            }
+            offset += charsThisLine;
+            remaining -= charsThisLine;
+          }
+        } else {
+          tft.setCursor(contentLeft, msgTop);
+          tft.print("Msg: Waiting for remote heartbeat...");
+        }
+      }
+    }
   }
-
-  tft.setCursor(12, 144);
-  if (bmpReady && !isnan(snapshot.temperatureC)) {
-    snprintf(line, sizeof(line), "Temp: %5.1fC  Pressure: %7.2fhPa", snapshot.temperatureC, snapshot.pressureHpa);
-    tft.print(line);
-  } else {
-    tft.print("BMP390 unavailable");
-  }
-
-  // Button Section
-  tft.setCursor(12, 186);
-  snprintf(line, sizeof(line), "BOOT: %s    USER: %s",
-           snapshot.buttonBootPressed ? "DOWN" : "UP  ",
-           snapshot.buttonUserPressed ? "DOWN" : "UP  ");
-  tft.print(line);
-
-  // LoRa Section
-  tft.setCursor(12, 226);
-  snprintf(line, sizeof(line), "TX:%lu RX:%lu", static_cast<unsigned long>(loraStatus.txCount),
-           static_cast<unsigned long>(loraStatus.rxCount));
-  tft.print(line);
-
-  tft.setCursor(160, 226);
-  snprintf(line, sizeof(line), "Last RSSI: %d", loraStatus.lastRssi);
-  tft.print(line);
-
-  tft.setCursor(12, 238);
-  snprintf(line, sizeof(line), "Last TX: %lus ago", (millis() - loraStatus.lastTxMillis) / 1000UL);
-  tft.print(line);
-
-  tft.setCursor(160, 238);
-  if (loraStatus.lastRxMillis > 0) {
-    snprintf(line, sizeof(line), "Last RX: %lus ago", (millis() - loraStatus.lastRxMillis) / 1000UL);
-  } else {
-    snprintf(line, sizeof(line), "Last RX: --");
-  }
-  tft.print(line);
-
-  tft.setCursor(12, 252);
-  if (loraStatus.lastMessageValid) {
-    snprintf(line, sizeof(line), "%s", loraStatus.lastMessage);
-  } else {
-    snprintf(line, sizeof(line), "Waiting for remote heartbeat...");
-  }
-  tft.print(line);
-
-  tft.fillRect(12, 264, 296, 44, ILI9341_BLACK);
-  tft.setCursor(12, 264);
-  tft.print("Serial monitor shows full sensor log.");
 }
 
 // --------------------------- LoRa Infrastructure -------------------------
@@ -511,7 +938,7 @@ void processLoRa() {
 
 void buildLoRaPacket() {
   snprintf(txpacket, sizeof(txpacket),
-           "FIX:%d,FIXTYPE:%u,SAT:%u,LAT:%.6f,LON:%.6f,ALT:%.1f,SPD:%.1f,TEMP:%.1f,PRES:%.1f,HEAD:%.1f,ROLL:%.1f,PITCH:%.1f,BTN:%d%d",
+           "FIX:%d,FIXTYPE:%u,SAT:%u,LAT:%.6f,LON:%.6f,ALT:%.1f,SPD:%.1f,TEMP:%.1f,PRES:%.1f,HEAD:%.1f,ROLL:%.1f,PITCH:%.1f,BTN:%d%d%d,BRI:%u,BUZ:%d",
            snapshot.gpsFix ? 1 : 0,
            snapshot.gpsFixType,
            snapshot.satellites,
@@ -524,8 +951,11 @@ void buildLoRaPacket() {
            snapshot.imuHeadingDeg,
            snapshot.imuRollDeg,
            snapshot.imuPitchDeg,
-           snapshot.buttonBootPressed ? 1 : 0,
-           snapshot.buttonUserPressed ? 1 : 0);
+           snapshot.buttonDimPressed ? 1 : 0,
+           snapshot.buttonBuzzPressed ? 1 : 0,
+           snapshot.buttonBrightPressed ? 1 : 0,
+           snapshot.displayBrightnessPercent,
+           snapshot.buzzerPlaying ? 1 : 0);
 }
 
 void OnTxDone(void) {
