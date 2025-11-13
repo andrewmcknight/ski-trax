@@ -26,6 +26,7 @@
 #include <Adafruit_BNO055.h>
 #include <utility/imumaths.h>
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <esp32-hal-ledc.h>
 #include "LoRaWan_APP.h"
 
 // ---------------------- Pin & Interface Definitions ----------------------
@@ -486,12 +487,12 @@ void drawStaticLayout() {
 
 void initBacklight() {
   pinMode(TFT_BACKLIGHT_PIN, OUTPUT);
-  ledcSetup(BACKLIGHT_CHANNEL, BACKLIGHT_PWM_FREQ, BACKLIGHT_PWM_RESOLUTION);
-  ledcAttachPin(TFT_BACKLIGHT_PIN, BACKLIGHT_CHANNEL);
+  (void)ledcAttachChannel(TFT_BACKLIGHT_PIN, BACKLIGHT_PWM_FREQ, BACKLIGHT_PWM_RESOLUTION,
+                          BACKLIGHT_CHANNEL);
 
   if (kBrightnessStepCount == 0) {
     currentBacklightDuty = 0;
-    ledcWrite(BACKLIGHT_CHANNEL, currentBacklightDuty);
+    ledcWrite(TFT_BACKLIGHT_PIN, currentBacklightDuty);
     snapshot.displayBrightnessPercent = 0;
     return;
   }
@@ -505,9 +506,8 @@ void initBacklight() {
 
 void initBuzzer() {
   pinMode(BUZZER_PIN, OUTPUT);
-  ledcSetup(BUZZER_CHANNEL, BUZZER_PWM_FREQ, BUZZER_PWM_RESOLUTION);
-  ledcAttachPin(BUZZER_PIN, BUZZER_CHANNEL);
-  ledcWrite(BUZZER_CHANNEL, 0);
+  (void)ledcAttachChannel(BUZZER_PIN, BUZZER_PWM_FREQ, BUZZER_PWM_RESOLUTION, BUZZER_CHANNEL);
+  ledcWrite(BUZZER_PIN, 0);
   buzzerPlaying = false;
   snapshot.buzzerPlaying = false;
 }
@@ -515,7 +515,7 @@ void initBuzzer() {
 void applyBacklightDuty() {
   if (kBrightnessStepCount == 0) {
     currentBacklightDuty = 0;
-    ledcWrite(BACKLIGHT_CHANNEL, 0);
+    ledcWrite(TFT_BACKLIGHT_PIN, 0);
     snapshot.displayBrightnessPercent = 0;
     return;
   }
@@ -525,7 +525,7 @@ void applyBacklightDuty() {
   }
 
   currentBacklightDuty = kBrightnessSteps[brightnessIndex];
-  ledcWrite(BACKLIGHT_CHANNEL, currentBacklightDuty);
+  ledcWrite(TFT_BACKLIGHT_PIN, currentBacklightDuty);
 
   snapshot.displayBrightnessPercent =
       static_cast<uint8_t>((static_cast<uint32_t>(currentBacklightDuty) * 100U + 127U) / 255U);
@@ -555,14 +555,14 @@ bool adjustBrightness(int8_t delta) {
 void triggerBuzzerPulse() {
   const unsigned long now = millis();
   buzzerOffDeadline = now + BUZZER_PULSE_MS;
-  ledcWrite(BUZZER_CHANNEL, BUZZER_ACTIVE_DUTY);
+  ledcWrite(BUZZER_PIN, BUZZER_ACTIVE_DUTY);
   buzzerPlaying = true;
   snapshot.buzzerPlaying = true;
 }
 
 void serviceBuzzer() {
   if (buzzerPlaying && millis() >= buzzerOffDeadline) {
-    ledcWrite(BUZZER_CHANNEL, 0);
+    ledcWrite(BUZZER_PIN, 0);
     buzzerPlaying = false;
     snapshot.buzzerPlaying = false;
   }

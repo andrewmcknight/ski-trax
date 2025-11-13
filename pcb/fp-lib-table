@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "ski_trax")(type "KiCad")(uri "${KIPRJMOD}/ski_trax.pretty")(options "")(descr ""))
+)
