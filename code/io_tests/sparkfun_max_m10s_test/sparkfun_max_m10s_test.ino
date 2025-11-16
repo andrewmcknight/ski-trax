@@ -4,8 +4,8 @@
  * Using SparkFun u-blox GNSS Arduino Library
  * 
  * Hardware Connections:
- * - SDA: GPIO 47
- * - SCL: GPIO 48
+ * - SDA: GPIO 48
+ * - SCL: GPIO 47
  * - I2C Address: 0x42 (fixed)
  * 
  * Installation:
@@ -26,8 +26,10 @@
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
 
 // I2C Configuration
-#define SDA_PIN 47
-#define SCL_PIN 48
+#define SDA_PIN 48
+#define SCL_PIN 47
+
+#define VEXT_CTRL 36
 
 // Create GNSS object
 SFE_UBLOX_GNSS myGNSS;
@@ -40,6 +42,11 @@ bool gpsInitialized = false;
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  // === ENABLE VEXT POWER RAIL ===
+  pinMode(VEXT_CTRL, OUTPUT);
+  digitalWrite(VEXT_CTRL, LOW);   // Turn on Vext 3.3V output
+  delay(50); // give sensors time to power up
   
   Serial.println("\n\n=============================================");
   Serial.println("    MAX-M10S GPS Test - Enhanced Version");

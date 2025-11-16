@@ -26,17 +26,16 @@
 #define TFT_SCK  3
 #define TFT_MISO -1  // Not used (write-only TFT)
 
+#define VEXT_CTRL 36
+
 // Safe SPI clock (ILI9341 supports up to 40 MHz)
 #define TFT_SPI_FREQUENCY  20000000UL
 
-Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+SPIClass tftSpi(HSPI);  // Dedicated HSPI bus so we don't disturb the SX1262 SPI wiring
+Adafruit_ILI9341 tft(&tftSpi, TFT_DC, TFT_CS, TFT_RST);
 
 static void configureSpiPins() {
-#if defined(ARDUINO_ARCH_ESP32)
-  SPI.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
-#else
-  SPI.begin();
-#endif
+  tftSpi.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
 }
 
 static void runScreenTest() {
@@ -74,6 +73,12 @@ static void runScreenTest() {
 void setup() {
   Serial.begin(115200);
   delay(200);
+
+  // === ENABLE VEXT POWER RAIL ===
+  pinMode(VEXT_CTRL, OUTPUT);
+  digitalWrite(VEXT_CTRL, LOW);   // Turn on Vext 3.3V output
+  delay(50); // give sensors time to power up
+  // ===============================
 
   Serial.println("\n=== EyeSPI ILI9341 Test (Core TFT Pins) ===");
   Serial.printf("CS=%d  DC=%d  RST=%d  MOSI=%d  SCK=%d\n",

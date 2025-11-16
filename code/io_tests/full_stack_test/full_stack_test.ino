@@ -30,8 +30,8 @@
 #include "LoRaWan_APP.h"
 
 // ---------------------- Pin & Interface Definitions ----------------------
-#define I2C_SDA_PIN 48
-#define I2C_SCL_PIN 47
+#define I2C_SDA_PIN 47
+#define I2C_SCL_PIN 48
 
 #define TFT_CS 7
 #define TFT_RST 6
@@ -42,13 +42,16 @@
 #define TFT_SPI_FREQUENCY 40000000UL
 
 #define BUTTON_DIM 40     // External button: dim TFT backlight
-#define BUTTON_BUZZ 41    // External button: trigger buzzer pulse
-#define BUTTON_BRIGHT 42  // External button: brighten TFT backlight
+#define BUTTON_BRIGHT 41  // External button: brighten TFT backlight
+#define BUTTON_BUZZ 42    // External button: trigger buzzer pulse
 
-#define TFT_BACKLIGHT_PIN 2  // PWM-capable pin connected to TFT backlight
 #define BUZZER_PIN 39        // Piezo buzzer control line
 
-#define VGNSS_CTRL 3    // Power control for GNSS module
+#define TFT_BACKLIGHT_PIN 2  // PWM-capable pin connected to TFT backlight
+
+constexpr uint8_t VEXT_CTRL_PIN = 36;     // Controls Vext rail for sensors/display
+constexpr bool VEXT_ENABLE_LEVEL = LOW;   // P-MOS turns on when gate pulled low
+constexpr unsigned long VEXT_STABILIZE_DELAY_MS = 10;
 
 const uint8_t BACKLIGHT_CHANNEL = 0;
 const uint8_t BUZZER_CHANNEL = 1;
@@ -78,7 +81,8 @@ const size_t kBrightnessStepCount = sizeof(kBrightnessSteps) / sizeof(kBrightnes
 const unsigned long LORA_TX_INTERVAL_MS = 5000;  // Periodic heartbeat interval
 
 // ------------------------------ Sensor Objects ---------------------------
-Adafruit_ILI9341 tft(TFT_CS, TFT_DC, TFT_RST);
+SPIClass tftSpi(HSPI);  // Dedicated HSPI bus so we don't disturb the SX1262 SPI wiring
+Adafruit_ILI9341 tft(&tftSpi, TFT_DC, TFT_CS, TFT_RST);
 Adafruit_BMP3XX bmp;
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
 SFE_UBLOX_GNSS myGNSS;
@@ -186,6 +190,7 @@ const unsigned long DISPLAY_REFRESH_MS = 500;
 void initDisplay();
 void drawStaticLayout();
 void updateDisplay();
+void enablePeripheralPower();
 void initBacklight();
 void initBuzzer();
 void applyBacklightDuty();
@@ -207,8 +212,7 @@ void setup() {
   delay(200);
   Serial.println("\n=== Full Stack I/O Validation ===\n");
 
-  pinMode(VGNSS_CTRL, OUTPUT);
-  digitalWrite(VGNSS_CTRL, HIGH);  // Enable GNSS power rail
+  enablePeripheralPower();
 
   pinMode(BUTTON_DIM, INPUT_PULLUP);
   pinMode(BUTTON_BUZZ, INPUT_PULLUP);
@@ -220,7 +224,7 @@ void setup() {
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Wire.setClock(400000);
 
-  SPI.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
+  tftSpi.begin(TFT_SCK, TFT_MISO, TFT_MOSI, TFT_CS);
   initDisplay();
 
   Serial.println("Initializing BMP390...");
@@ -312,6 +316,12 @@ void loop() {
 }
 
 // ------------------------------ Initialization ---------------------------
+void enablePeripheralPower() {
+  pinMode(VEXT_CTRL_PIN, OUTPUT);
+  digitalWrite(VEXT_CTRL_PIN, VEXT_ENABLE_LEVEL);
+  delay(VEXT_STABILIZE_DELAY_MS);  // Give sensors/display rail time to rise
+}
+
 void initDisplay() {
   tft.begin(TFT_SPI_FREQUENCY);
   tft.setRotation(0);  // Portrait orientation for 240x360 layout

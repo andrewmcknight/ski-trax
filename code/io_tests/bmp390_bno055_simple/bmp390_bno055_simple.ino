@@ -4,6 +4,7 @@
  * 
  * GPIO 47 = SDA
  * GPIO 48 = SCL
+ * GPIO 36 = Vext control (active HIGH)
  */
 
 #include <Wire.h>
@@ -13,6 +14,7 @@
 
 #define SDA_PIN 47
 #define SCL_PIN 48
+#define VEXT_CTRL 36   // <-- NEW
 
 Adafruit_BMP3XX bmp;
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28);
@@ -23,14 +25,20 @@ bool bno_found = false;
 void setup() {
   Serial.begin(115200);
   while (!Serial) delay(10);
-  delay(1000);
-  
+  delay(500);
+
+  // === ENABLE VEXT POWER RAIL ===
+  pinMode(VEXT_CTRL, OUTPUT);
+  digitalWrite(VEXT_CTRL, LOW);   // Turn on Vext 3.3V output
+  delay(50); // give sensors time to power up
+  // ===============================
+
   Serial.println("\n=== BMP390 + BNO055 Test ===\n");
-  
+
   // Initialize I2C
   Wire.begin(SDA_PIN, SCL_PIN);
-  Serial.println("I2C initialized on GPIO 47 (SDA) and GPIO 48 (SCL)");
-  
+  Serial.println("I2C initialized on GPIO 48 (SDA) and GPIO 47 (SCL)");
+
   // Scan I2C bus
   Serial.println("\nScanning I2C bus...");
   byte error, address;
@@ -48,7 +56,7 @@ void setup() {
   Serial.print("Found ");
   Serial.print(nDevices);
   Serial.println(" device(s)\n");
-  
+
   // Initialize BMP390
   Serial.println("Initializing BMP390...");
   if (bmp.begin_I2C()) {
@@ -61,7 +69,7 @@ void setup() {
   } else {
     Serial.println("✗ BMP390 not found!");
   }
-  
+
   // Initialize BNO055
   Serial.println("\nInitializing BNO055...");
   if (bno.begin()) {
@@ -74,18 +82,18 @@ void setup() {
     Serial.println("  Make sure PS0=LOW and PS1=LOW for I2C mode");
     Serial.println("  Default address is 0x28 (COM3=LOW)");
   }
-  
+
   if (!bmp_found && !bno_found) {
     Serial.println("\n⚠ No sensors found! Check wiring.");
     while(1) delay(100);
   }
-  
+
   Serial.println("\n=== Starting readings ===\n");
 }
 
 void loop() {
   Serial.println("------ Reading Sensors ------");
-  
+
   // Read BMP390
   if (bmp_found) {
     if (bmp.performReading()) {
@@ -107,12 +115,11 @@ void loop() {
       Serial.println("\nBMP390: Read failed!");
     }
   }
-  
+
   // Read BNO055
   if (bno_found) {
     Serial.println("\nBNO055:");
-    
-    // Orientation
+
     sensors_event_t event;
     bno.getEvent(&event);
     Serial.print("  Heading: ");
@@ -124,8 +131,7 @@ void loop() {
     Serial.print("  Pitch:   ");
     Serial.print(event.orientation.z);
     Serial.println(" °");
-    
-    // Calibration status
+
     uint8_t system, gyro, accel, mag;
     bno.getCalibration(&system, &gyro, &accel, &mag);
     Serial.print("  Cal: Sys=");
@@ -136,14 +142,13 @@ void loop() {
     Serial.print(accel);
     Serial.print(" Mag=");
     Serial.println(mag);
-    
-    // Temperature
+
     int8_t temp = bno.getTemp();
     Serial.print("  Temp:    ");
     Serial.print(temp);
     Serial.println(" °C");
   }
-  
+
   Serial.println("-----------------------------\n");
   delay(1000);
 }
