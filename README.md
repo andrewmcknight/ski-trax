@@ -13,8 +13,8 @@ Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. I
 ## Current Pin Assignments
 | Function | Heltec GPIO | Notes |
 |----------|-------------|-------|
-| I2C SDA | 48 | Shared by MAX-M10S, BNO055, BMP390 |
-| I2C SCL | 47 | Shared by MAX-M10S, BNO055, BMP390 |
+| I2C SDA | 47 | Shared by MAX-M10S, BNO055, BMP390 |
+| I2C SCL | 48 | Shared by MAX-M10S, BNO055, BMP390 |
 | TFT SCK | 3 | Hardware SPI via EyeSPI ribbon |
 | TFT MOSI | 4 | Hardware SPI via EyeSPI ribbon |
 | TFT CS | 7 | |
@@ -26,8 +26,9 @@ Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. I
 | Button – Brighten | 42 | Input with pull-up |
 | Piezo Buzzer | 39 | LEDC PWM output |
 
-> **Note:** Additional peripherals (LoRa radio, onboard OLED, etc.) are handled by the Heltec board but not yet integrated into the main application sketch.
+> **Note:** LoRa radio is built into the Heltec board!
 
 ## Project Status
-- I/O test sketches complete for GNSS, TFT, IMU, pressure sensor, buttons, and buzzer
-- In progress: pcb and enclosure design, user-facing app, and field testing
+- I/O test sketches complete for full hardware stack
+- PCB design finalized
+- In progress: enclosure design, user-facing app, and field testing
