@@ -203,6 +203,11 @@ uint8_t voltageToPercent(float v) {
   return (uint8_t)(((v - 3.3f) / 0.9f) * 100.0f);
 }
 
+uint8_t toESTHour(uint8_t utcHour) {
+  // GPS time is UTC; EST = UTC-5 (no DST handling here)
+  return (utcHour + 24 - 5) % 24;
+}
+
 // ======================== SENSOR UPDATE ========================
 void updateSensors() {
   // ---------- IMU (BNO055) ----------
@@ -244,7 +249,7 @@ void updateSensors() {
       state.longitude = gnss.getLongitude() / 10000000.0;
       state.gpsAltitude = gnss.getAltitude()  / 1000.0; // m
 
-      state.hour   = gnss.getHour();
+      state.hour   = toESTHour(gnss.getHour());
       state.minute = gnss.getMinute();
     } else {
       state.gpsAltitude = NAN;
@@ -491,23 +496,28 @@ void drawNameBand() {
   tft.fillRect(0, kNameBandTop, kScreenWidth, kNameBandHeight, ILI9341_BLACK);
   tft.setFont(&FreeSansBold12pt7b);
   tft.setTextSize(2);
-  tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+  tft.setTextColor(ILI9341_BLUE, ILI9341_BLACK);
 
   int16_t x1, y1;
   uint16_t w, h;
   tft.getTextBounds(kPeerName, 0, 0, &x1, &y1, &w, &h);
-  tft.setCursor((kScreenWidth - w) / 2, kNameBandTop + 24);
+  tft.setCursor((kScreenWidth - w) / 2, kNameBandTop + 34);
   tft.print(kPeerName);
 }
 
 
 // ======================== UI: COMPASS ============================
 void drawCompass() {
+  static int16_t bgX = -1;
+  static int16_t bgY = -1;
+
+  if (bgX < 0 || bgY < 0) {
+    bgX = (kScreenWidth - kCompassBgSize) / 2;
+    bgY = kNameBandTop + kNameBandHeight + 10;
+  }
+
   // Draw the background exactly once
   if (!compassBgDrawn) {
-    int16_t bgX = (kScreenWidth - kCompassBgSize) / 2;
-    int16_t bgY = kNameBandTop + kNameBandHeight + 10;
-
     tft.drawRGBBitmap(bgX, bgY, compass_bg, kCompassBgSize, kCompassBgSize);
     compassBgDrawn = true;
   }
@@ -521,6 +531,9 @@ void drawCompass() {
   }
 
   if (needleIdx != lastNeedle && needleIdx < kNumNeedles) {
+    // Clear previous needle by repainting the compass background
+    tft.drawRGBBitmap(bgX, bgY, compass_bg, kCompassBgSize, kCompassBgSize);
+
     int16_t needleX = (kScreenWidth - kNeedleSize) / 2;
     int16_t needleY = kNameBandTop + kNameBandHeight + 13;
 
@@ -580,8 +593,8 @@ void drawStats() {
   }
 
   // ----- Right: Distance -----
-  tft.drawRGBBitmap(130, y + 4, distance_32x20, 32, 20);
-  tft.setCursor(170, y + 20);
+  tft.drawRGBBitmap(148, y + 4, distance_32x20, 32, 20);
+  tft.setCursor(188, y + 20);
 
   if (!isnan(state.distance)) {
     float feet = state.distance * 3.28084;
@@ -638,7 +651,7 @@ void setup() {
   // -------- TFT SPI Init --------------------------------------
   tftSpi.begin(Pins::TFT_SCK, Pins::TFT_MISO, Pins::TFT_MOSI, Pins::TFT_CS);
   tft.begin(40000000UL);
-  tft.setRotation(0);
+  tft.setRotation(2);  // flipped 180°
   tft.fillScreen(ILI9341_BLACK);
 
   // Backlight via LEDC PWM
