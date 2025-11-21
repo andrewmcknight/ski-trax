@@ -95,6 +95,7 @@ constexpr uint16_t kCompassBgSize   = 176;
 constexpr uint16_t kNeedleSize      = 170;
 constexpr uint16_t kMagentaKey      = 0xF81F;
 constexpr uint32_t kTxOffsetMs      = (kMyId == 0x01) ? 0 : kUpdateIntervalMs / 2;  // stagger Joey/Molly to avoid collisions
+constexpr uint32_t kLongPressMs     = 1500;
 
 // LoRa RF frequency (US)
 constexpr uint32_t RF_FREQUENCY = 915000000UL;
@@ -147,6 +148,8 @@ struct AppState {
 
   float distance = NAN;
   float altDelta = NAN;
+
+  bool sleeping = false;
 };
 
 // ======================== GLOBAL OBJECTS ========================
@@ -163,6 +166,8 @@ RadioEvents_t radioEvents;
 
 uint32_t nextTxTime = 0;
 uint32_t lastSensorUpdate = 0;
+uint32_t buttonPressStart = 0;
+bool buttonHeld = false;
 
 // Needle frames array
 const uint16_t* needleFrames[] = {
@@ -208,8 +213,70 @@ uint8_t toESTHour(uint8_t utcHour) {
   return (utcHour + 24 - 5) % 24;
 }
 
+void enterSleep() {
+  if (state.sleeping) return;
+  state.sleeping = true;
+  Radio.Sleep();
+  ledcWrite(Pins::TFT_BACKLIGHT, 0);
+  tft.fillScreen(ILI9341_BLACK);
+  digitalWrite(Pins::VEXT_CTRL, HIGH);  // cut power to sensors/display rail
+  state.gpsReady = state.imuReady = state.bmpReady = false;
+  state.gpsFix = false;
+  state.altitude = state.gpsAltitude = state.heading = NAN;
+  Serial.println("[Power] Entering sleep");
+}
+
+void exitSleep() {
+  if (!state.sleeping) return;
+  digitalWrite(Pins::VEXT_CTRL, LOW);
+  delay(80);
+  // Re-init display after rail comes back
+  tft.begin(40000000UL);
+  tft.setRotation(2);  // keep 180° flip
+  tft.fillScreen(ILI9341_BLACK);
+  ledcWrite(Pins::TFT_BACKLIGHT, 220);
+  // Mark sensors to re-init on next update
+  state.gpsReady = state.imuReady = state.bmpReady = false;
+  state.sleeping = false;
+  nextTxTime = millis() + kTxOffsetMs;
+  Radio.Rx(0);
+  // Redraw static UI
+  compassBgDrawn = false;
+  lastNeedle = kNumNeedles;
+  drawTopBar();
+  drawNameBand();
+  drawStats();
+  Serial.println("[Power] Woke from sleep");
+}
+
+void handleButtons() {
+  bool pressed = (digitalRead(Pins::BUTTON_CENTER) == LOW);  // active-low buttons
+  bool leftPressed = (digitalRead(Pins::BUTTON_LEFT) == LOW);
+
+  if (leftPressed) {
+    Serial.println("[Power] Left button reset");
+    ESP.restart();
+  }
+
+  if (pressed && !buttonHeld) {
+    if (buttonPressStart == 0) buttonPressStart = millis();
+    if (millis() - buttonPressStart >= kLongPressMs) {
+      buttonHeld = true;
+      if (state.sleeping) {
+        exitSleep();
+      } else {
+        enterSleep();
+      }
+    }
+  } else if (!pressed) {
+    buttonPressStart = 0;
+    buttonHeld = false;
+  }
+}
+
 // ======================== SENSOR UPDATE ========================
 void updateSensors() {
+  if (state.sleeping) return;
   // ---------- IMU (BNO055) ----------
   if (!state.imuReady) {
     if (bno.begin()) {
@@ -643,6 +710,11 @@ void setup() {
   digitalWrite(Pins::VEXT_CTRL, LOW);   // LOW = ON for Heltec VEXT
   delay(80);
 
+  // -------- Buttons -------------------------------------------
+  pinMode(Pins::BUTTON_LEFT, INPUT_PULLUP);
+  pinMode(Pins::BUTTON_CENTER, INPUT_PULLUP);
+  pinMode(Pins::BUTTON_RIGHT, INPUT_PULLUP);
+
   // -------- I2C Init ------------------------------------------
   Wire.begin(Pins::I2C_SDA, Pins::I2C_SCL);
   Wire.setClock(400000);
@@ -679,6 +751,10 @@ void loop() {
     lastSensorUpdate = now;
     updateSensors();
   }
+
+  // ---------- Buttons / power ----------
+  handleButtons();
+  if (state.sleeping) return;
 
   // ---------- LoRa update (2 Hz) ----------
   if (nextTxTime == 0) {
