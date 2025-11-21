@@ -32,3 +32,12 @@ Ski-Trax is an embedded tracking node built around the Heltec WiFi LoRa 32 V3. I
 - I/O test sketches complete for full hardware stack
 - PCB design finalized
 - In progress: enclosure design, user-facing app, and field testing
+
+## Main Firmware Overview
+- `code/main/src/main.cpp` now implements the end-to-end Ski-Trax experience: splash/pairing UI, nickname entry, host/join workflows, session beacons, and the tracking carousel.
+- Pairing uses LoRa beacons + join-request/accept handshakes so guests can browse nearby sessions before entering tracking mode.
+- The tracking screen keeps the top status bar (GPS time, battery icon, sensor indicators) visible while the layered compass renderer shows peer direction, distance, and altitude deltas using imperial units.
+
+## Compass Demo Assets
+- `code/examples/compass_heading` now renders a static 176×176 compass background (`compass_bg.h`) plus transparent 170×170 needle overlays (`needle_XXX.h`).
+- Transparent pixels are encoded with RGB565 magenta (`0xF81F`) so the background shows through; only the rotating needle region is redrawn each update to minimize SPI traffic and flicker.
